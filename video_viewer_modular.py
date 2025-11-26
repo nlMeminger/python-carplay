@@ -41,17 +41,27 @@ class ModularVideoViewer:
     Video viewer application built with modular components
     """
     
-    def __init__(self, enable_frame_saver: bool = False):
+    def __init__(self, enable_frame_saver: bool = False, fullscreen: bool = True):
         """
         Initialize the viewer
         
         Args:
             enable_frame_saver: Whether to save raw frames for debugging
+            fullscreen: Whether to start in fullscreen mode
         """
         # Create main window
         self.root = tk.Tk()
         self.root.title("CarPlay/Android Auto Viewer (Modular)")
-        self.root.geometry("1200x900")
+        
+        # Set fullscreen mode
+        self.fullscreen = fullscreen
+        if self.fullscreen:
+            self.root.attributes('-fullscreen', True)
+            # Bind Escape key to exit fullscreen
+            self.root.bind('<Escape>', self.toggle_fullscreen)
+            self.root.bind('<F11>', self.toggle_fullscreen)
+        else:
+            self.root.geometry("1200x900")
         
         # Initialize modular components
         self.decoder = VideoDecoder()
@@ -74,20 +84,40 @@ class ModularVideoViewer:
         
         # UI components
         self.frame_queue = queue.Queue(maxsize=5)
+        self.show_controls = True
         self.setup_ui()
         
         # Start UI update loop
         self.update_display()
     
+    def toggle_fullscreen(self, event=None):
+        """Toggle fullscreen mode"""
+        self.fullscreen = not self.fullscreen
+        self.root.attributes('-fullscreen', self.fullscreen)
+        return "break"  # Prevent event propagation
+    
+    def toggle_controls(self, event=None):
+        """Toggle visibility of control panels (press 'h' to hide/show)"""
+        self.show_controls = not self.show_controls
+        
+        if self.show_controls:
+            self.control_frame.pack(fill=tk.X, before=self.separator)
+            self.separator.pack(fill=tk.X, pady=5, before=self.video_frame)
+            self.info_frame.pack(fill=tk.X)
+        else:
+            self.control_frame.pack_forget()
+            self.separator.pack_forget()
+            self.info_frame.pack_forget()
+    
     def setup_ui(self):
         """Setup the user interface"""
         # Top control bar
-        control_frame = ttk.Frame(self.root, padding="10")
-        control_frame.pack(fill=tk.X)
+        self.control_frame = ttk.Frame(self.root, padding="10")
+        self.control_frame.pack(fill=tk.X)
         
         # Status indicator
         self.status_label = ttk.Label(
-            control_frame,
+            self.control_frame,
             text="● Not Connected",
             font=("Arial", 11, "bold"),
             foreground="red"
@@ -96,7 +126,7 @@ class ModularVideoViewer:
         
         # Stats display
         self.stats_label = ttk.Label(
-            control_frame,
+            self.control_frame,
             text="Frames: 0 | FPS: 0 | Decode: 0%",
             font=("Arial", 10)
         )
@@ -104,22 +134,32 @@ class ModularVideoViewer:
         
         # Microphone toggle button
         self.mic_button = ttk.Button(
-            control_frame,
+            self.control_frame,
             text="🎤 Enable Mic",
             command=self.toggle_microphone
         )
         self.mic_button.pack(side=tk.RIGHT, padx=5)
         
+        # Help text
+        help_label = ttk.Label(
+            self.control_frame,
+            text="ESC/F11: Fullscreen | H: Toggle Controls",
+            font=("Arial", 9),
+            foreground="gray"
+        )
+        help_label.pack(side=tk.RIGHT, padx=20)
+        
         # Separator
-        ttk.Separator(self.root, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
+        self.separator = ttk.Separator(self.root, orient=tk.HORIZONTAL)
+        self.separator.pack(fill=tk.X, pady=5)
         
-        # Video display area
-        video_frame = ttk.Frame(self.root)
-        video_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        # Video display area (takes all available space)
+        self.video_frame = ttk.Frame(self.root)
+        self.video_frame.pack(fill=tk.BOTH, expand=True, padx=0, pady=0)
         
-        # Canvas for video
+        # Canvas for video (maximized - no padding)
         self.canvas = tk.Canvas(
-            video_frame,
+            self.video_frame,
             bg="black",
             highlightthickness=0
         )
@@ -127,8 +167,8 @@ class ModularVideoViewer:
         
         # Placeholder text
         self.placeholder_label = ttk.Label(
-            video_frame,
-            text="Waiting for connection...\n\nConnect your phone via USB",
+            self.video_frame,
+            text="Waiting for connection...\n\nConnect your phone via USB\n\n(Press ESC or F11 to exit fullscreen)",
             font=("Arial", 14),
             foreground="white",
             background="black"
@@ -140,12 +180,16 @@ class ModularVideoViewer:
         self.canvas.bind("<B1-Motion>", self._on_mouse_move)
         self.canvas.bind("<ButtonRelease-1>", self._on_mouse_up)
         
+        # Bind keyboard shortcuts
+        self.root.bind('<h>', self.toggle_controls)
+        self.root.bind('<H>', self.toggle_controls)
+        
         # Bottom info bar
-        info_frame = ttk.Frame(self.root, padding="5")
-        info_frame.pack(fill=tk.X)
+        self.info_frame = ttk.Frame(self.root, padding="5")
+        self.info_frame.pack(fill=tk.X)
         
         self.info_label = ttk.Label(
-            info_frame,
+            self.info_frame,
             text="Ready to connect",
             font=("Arial", 9),
             foreground="gray"
@@ -326,7 +370,7 @@ class ModularVideoViewer:
                 canvas_height = self.canvas.winfo_height()
                 
                 if canvas_width > 1 and canvas_height > 1:
-                    # Calculate scaling
+                    # Calculate scaling to maximize display while maintaining aspect ratio
                     scale_w = canvas_width / image.width
                     scale_h = canvas_height / image.height
                     scale = min(scale_w, scale_h)
@@ -342,6 +386,7 @@ class ModularVideoViewer:
                     photo = ImageTk.PhotoImage(resized_image)
                     
                     self.canvas.delete("all")
+                    # Center the image
                     x = (canvas_width - new_width) // 2
                     y = (canvas_height - new_height) // 2
                     self.canvas.create_image(x, y, anchor=tk.NW, image=photo)
@@ -445,17 +490,38 @@ def main():
     
     # Check for command line options
     enable_frame_saver = '--save-frames' in sys.argv or '-s' in sys.argv
+    windowed = '--windowed' in sys.argv or '-w' in sys.argv
     
     if enable_frame_saver:
         print("Frame saving enabled - raw frames will be saved to raw_frames/")
         print()
     
+    if windowed:
+        print("Starting in windowed mode")
+        fullscreen = False
+    else:
+        print("Starting in fullscreen mode")
+        print("Press ESC or F11 to toggle fullscreen")
+        print("Press H to hide/show controls")
+        fullscreen = True
+    
+    print()
+    
     # Create and run application
-    app = ModularVideoViewer(enable_frame_saver=enable_frame_saver)
+    app = ModularVideoViewer(
+        enable_frame_saver=enable_frame_saver,
+        fullscreen=fullscreen
+    )
     app.run()
 
 
 if __name__ == '__main__':
-    print("\nUsage: python video_viewer_modular.py [--save-frames]")
-    print("  --save-frames, -s : Save raw frames for debugging\n")
+    print("\nUsage: python video_viewer_modular.py [options]")
+    print("Options:")
+    print("  --save-frames, -s : Save raw frames for debugging")
+    print("  --windowed, -w    : Start in windowed mode (default: fullscreen)")
+    print("\nKeyboard shortcuts:")
+    print("  ESC or F11        : Toggle fullscreen mode")
+    print("  H                 : Hide/show control panels")
+    print()
     main()
